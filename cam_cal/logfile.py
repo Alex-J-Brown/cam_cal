@@ -17,9 +17,8 @@ class Logfile:
         self.instrument = instrument
         self.tel_location = tel_location
 
-        self.run = self.getRun()
         self.params = self.get_params()
-        self.run = self.params['run']
+        self.run = os.path.basename(self.params['run'])
         self.extraction = self.params['2'].split()[1]
         self.r_aperture = self.params['2'].split()[2]
         self.path, self.fname = self.getPath()
