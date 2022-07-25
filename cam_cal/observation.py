@@ -104,7 +104,6 @@ class Observation:
         return fname
             
 
-
     def add_observation(self, name=None, logfiles=None, obs_type='science', cal_mags=None):
         """
         Adds logfiles and any other key info about a target/observation to
@@ -253,6 +252,7 @@ class Observation:
                     ax.scatter(apdata[:,0], utils.flux_to_mag(apdata[:,2], apdata[:,3])[0],
                                label="ap{}, {}".format(*ap_info[idx]))
                     ax.plot(apdata[:,0], utils.linear(apdata[:,0], p[0], p[idx+1]), 'k--')
+                    # ax.legend()
                 plt.show()
             temp_extinctions['mean'][filt] = p[0]
             temp_extinctions['err'][filt] = np.max([errs[0], 0.01])
