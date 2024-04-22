@@ -73,7 +73,7 @@ class Logfile:
                 coords = self.getCoords(target, verbose=verbose)
         elif self.instrument == 'hipercam':
             target = f[0].header['OBJECT']
-            filters = re.findall(r"([ugriz]s,?)", f[0].header['FILTERS'])
+            filters = re.findall(r"([ugriz]s),?", f[0].header['FILTERS'])
             coords_str = ' '.join([f[0].header['RA'], f[0].header['DEC']])
             coords = SkyCoord(coords_str, unit=(u.hourangle, u.deg))
         f.close()
