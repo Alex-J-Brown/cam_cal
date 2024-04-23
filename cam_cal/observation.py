@@ -83,11 +83,15 @@ class Observation:
 
         # self.atm_extinction = dict(mean=dict(u=0.48, g=0.24, r=0.18, i=0.15, z=0.10),
         #                            err=dict(u=0.05, g=0.05, r=0.05, i=0.05, z=0.05))
-        self.atm_extinction = dict(mean={'us':0.48, 'gs':0.24, 'rs':0.18, 'is':0.15, 'zs':0.10},
-                                   err={'us':0.05, 'gs':0.05, 'rs':0.05, 'is':0.05, 'zs':0.05})
+        self.atm_extinction = dict(mean={'us':0.48, 'gs':0.24, 'rs':0.18, 'is':0.15, 'zs':0.10,
+                                         'u':0.48, 'g':0.24, 'r':0.18, 'i':0.15, 'z':0.10},
+                                   err={'us':0.05, 'gs':0.05, 'rs':0.05, 'is':0.05, 'zs':0.05,
+                                        'u':0.05, 'g':0.05, 'r':0.05, 'i':0.05, 'z':0.05})
         if self.instrument=='ultracam':
-            self.zeropoint = dict(mean={'us':25.09, 'gs':26.70, 'rs':26.30, 'is':25.90, 'zs':25.30},
-                                  err={'us':0.05, 'gs':0.05, 'rs':0.05, 'is':0.05, 'zs':0.05},
+            self.zeropoint = dict(mean={'us':25.09, 'gs':26.70, 'rs':26.30, 'is':25.90, 'zs':25.30,
+                                        'u':25.09, 'g':26.70, 'r':26.30, 'i':25.90, 'z':25.30},
+                                  err={'us':0.05, 'gs':0.05, 'rs':0.05, 'is':0.05, 'zs':0.05,
+                                       'u':0.05, 'g':0.05, 'r':0.05, 'i':0.05, 'z':0.05},
                                   airmass=0.0)
         elif self.instrument=='hipercam':
             self.zeropoint = dict(mean={'us':28.15, 'gs':29.22, 'rs':28.78, 'is':28.43, 'zs':27.94},
@@ -139,7 +143,7 @@ class Observation:
         mags_dict = dict(mean={'us':0, 'gs':0, 'rs':0, 'is':0, 'zs':0},
                          err={'us':0.022, 'gs':0.022, 'rs':0.022, 'is':0.022, 'zs':0.022})
         for filt in ['us', 'gs', 'rs', 'is', 'zs']:
-            mags_dict['mean'][filt] = float(series[filt])
+            mags_dict['mean'][filt] = float(series[filt].iloc[0])
         return mags_dict
 
 
@@ -226,21 +230,21 @@ class Observation:
                               self.tel_location, verbose=False)
 
                 for ap in log.apnames[self.filt2ccd[filt]]:
-                    data = np.empty((0,4))
+                    data = np.empty((0,5))
 
                     for lfile in atm_targets[target]:
                         # stitch multiple observations of same field together
                         log = Logfile(lfile, self.instrument, self.tel_location, log.target_coords, verbose=False)
                         data_new = log.openData(self.filt2ccd[filt], ap,
                                                 save=False,
-                                                mask=True)[0][:, [0, 2, 3]]
-                        data_new = data_new[(np.abs(data_new[:,1] - np.median(data_new[:,1])) / np.abs(np.std(data_new[:,1]))) < 5]
+                                                mask=True)[0][:, [0, 1, 2, 3]]
+                        data_new = data_new[(np.abs(data_new[:,2] - np.median(data_new[:,2])) / np.abs(np.std(data_new[:,2]))) < 5]
                         t = Time(data_new[:,0], format='mjd', scale='tdb')
                         # add airmass column
                         data_am = np.column_stack((self.airmass(t, log.target_coords), data_new))
                         data = np.vstack((data, data_am))
                         # remove negative flux measurements
-                        data = data[data[:,2] > 0]
+                        data = data[data[:,3] > 0]
                     ap_info.append((target, ap))
                     # add stitched data to apertures list
                     apertures.append(data)
@@ -249,7 +253,7 @@ class Observation:
             if plot:
                 _, ax = plt.subplots()
                 for idx, apdata in enumerate(apertures):
-                    ax.scatter(apdata[:,0], utils.flux_to_mag(apdata[:,2], apdata[:,3])[0],
+                    ax.scatter(apdata[:,0], utils.flux_to_mag(apdata[:,3]/apdata[:,2], apdata[:,4]/apdata[:,2])[0],
                                label="ap{}, {}".format(*ap_info[idx]))
                     ax.plot(apdata[:,0], utils.linear(apdata[:,0], p[0], p[idx+1]), 'k--')
                     # ax.legend()
@@ -273,7 +277,7 @@ class Observation:
         diff = np.array([])
         for i, data in enumerate(apertures):
             # compute chi residuals for each aperture
-            mag, mag_err = utils.flux_to_mag(data[:,2], data[:,3])
+            mag, mag_err = utils.flux_to_mag(data[:,3]/data[:,2], data[:,4]/data[:,2])
             airmass = data[:,0]
             diff_new = np.abs((mag - utils.linear(airmass, k, c[i])) / mag_err)
             diff = np.hstack((diff, diff_new))
@@ -443,7 +447,7 @@ class Observation:
             self.comparison_mags[targ_name] = cal_mags_filt
 
 
-    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False):
+    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False, show=False):
         """
         Flux calibrate the selected science target using the calibrated comparison stars.
         eclipse width can be specified.
@@ -454,7 +458,8 @@ class Observation:
         log = Logfile(self.observations['science'][target_name]['logfiles'][0],
                       self.instrument, self.tel_location)
         target = log.target.replace(' ', '_')
-        ccd = self.filt2ccd['g']
+        target = target.replace('_J', 'J')
+        ccd = self.filt2ccd['gs']
         target_data_orig, target_mask = log.openData(ccd, '1', save=False,
                                                      mask=False)
         target_data, _, diffFlux, _, _ = self.diff_phot(log, ccd, '2', target_data_orig, target_mask)
@@ -506,9 +511,10 @@ class Observation:
                 bary_corr = log.barycorr(t_out).value
                 bmjd_tdb = t_out + bary_corr
 
-                _, ax = plt.subplots()
-                ax.scatter(bmjd_tdb, calFlux_out)
-                plt.show()
+                if show:
+                    _, ax = plt.subplots()
+                    ax.scatter(bmjd_tdb, calFlux_out)
+                    plt.show()
 
                 out = np.column_stack((bmjd_tdb, exp_out, calFlux_out,
                                        calFluxErr_out, weights, weights))
@@ -536,17 +542,16 @@ class Observation:
                        ZP=round(self.zeropoint['mean'][filt], 5),
                        ZP_E=round(self.zeropoint['err'][filt], 5))
 
-            if not os.path.isdir(os.path.join(log.path, 'reduced')):
-                os.makedirs(os.path.join(log.path, 'reduced'))
-            if not os.path.isdir(os.path.join(log.path, 'reduced', target)):
-                os.makedirs(os.path.join(log.path, 'reduced', target))
 
             tab_data = Table(out_dict['data'][save_ap], names=('BMJD(TDB)', 'exp_time', 'flux', 'flux_err', 'weight', 'esubd'))
             data_arrays['data'][filt] = tab_data
             data_arrays['header'][filt] = hdr
         t = Time(start, format='mjd', scale='tdb').ymdhms
+        
         if t[3] < 14:
             night = f"{t[0]}-{t[1]}-{t[2]-1}"
+        else:
+            night = f"{t[0]}-{t[1]}-{t[2]}"
 
         header = dict(TARGET=target,
                       RUN=log.run, FILTERS=", ".join(log.filters),
@@ -569,9 +574,13 @@ class Observation:
         if t0:
             header['ECLIP_T0'] = t0 + bary_corr[0]
         hdul = FITS.create(data_arrays, header)
-        path = os.path.join(log.path, 'reduced', target)
         if use_given_name:
             target = target_name
+        path = os.path.join(log.path, 'reduced', target)
+        if not os.path.isdir(os.path.join(log.path, 'reduced')):
+            os.makedirs(os.path.join(log.path, 'reduced'))
+        if not os.path.isdir(os.path.join(log.path, 'reduced', target)):
+            os.makedirs(os.path.join(log.path, 'reduced', target))
         fname = f"{target}.fits"
         fname = os.path.join(path, fname)
         hdul.write(fname)
