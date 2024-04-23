@@ -12,7 +12,7 @@ from tkinter.filedialog import askopenfilename, askopenfilenames
 
 class Logfile:
 
-    def __init__(self, file, instrument, tel_location, target_coords=None, verbose=True):
+    def __init__(self, file, instrument, tel_location, target_coords=None, filters=None, verbose=True):
         self.logfile = file
         self.instrument = instrument
         self.tel_location = tel_location
@@ -22,7 +22,7 @@ class Logfile:
         self.extraction = self.params['2'].split()[1]
         self.r_aperture = self.params['2'].split()[2]
         self.path, self.fname = self.getPath()
-        self.target, self.filters, self.target_coords = self.getTarget(target_coords, verbose)
+        self.target, self.filters, self.target_coords = self.getTarget(target_coords, filters, verbose)
         self.logf = hlog.Hlog.rascii(self.logfile)
         self.apnames = self.logf.apnames.copy()
         if verbose:
@@ -61,19 +61,21 @@ class Logfile:
         return log_params['run']
 
 
-    def getTarget(self, target_coords, verbose=True):
+    def getTarget(self, target_coords, filters=None, verbose=True):
         f = fits.open(os.path.join(self.path, self.run + '.hcm'))
         if self.instrument == 'ultracam':
             target = f[0].header['TARGET']
-            filters = re.findall(r"(Super)?\s?([ugriz])'", f[0].header['FILTERS'])
-            filters = [f'{x[1]}s' if 'Super' in filters[0] else f'{x[1]}' for x in filters]
+            if not filters:
+                filters = re.findall(r"(Super)?\s?([ugriz])'", f[0].header['FILTERS'])
+                filters = [f'{x[1]}s' if 'Super' in filters[0] else f'{x[1]}' for x in filters]
             if target_coords:
                 coords = target_coords
             else:
                 coords = self.getCoords(target, verbose=verbose)
         elif self.instrument == 'hipercam':
             target = f[0].header['OBJECT']
-            filters = re.findall(r"([ugriz]s),?", f[0].header['FILTERS'])
+            if not filters:
+                filters = re.findall(r"([ugriz]s),?", f[0].header['FILTERS'])
             coords_str = ' '.join([f[0].header['RA'], f[0].header['DEC']])
             coords = SkyCoord(coords_str, unit=(u.hourangle, u.deg))
         f.close()
@@ -105,8 +107,8 @@ class Logfile:
 
 
     def openData(self, ccd, ap, save=False, mask=True, trim_start=1, trim_end=1):
-        target = self.target.replace(' ', '_')
-        filters = self.filters[::-1]
+        # target = self.target.replace(' ', '_')
+        # filters = self.filters[::-1]
 
         if trim_end == 0:
             trim_end = None
