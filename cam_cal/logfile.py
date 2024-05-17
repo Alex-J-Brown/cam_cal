@@ -76,8 +76,12 @@ class Logfile:
             target = f[0].header['OBJECT']
             if not filters:
                 filters = re.findall(r"([ugriz]s),?", f[0].header['FILTERS'])
-            coords_str = ' '.join([f[0].header['RA'], f[0].header['DEC']])
-            coords = SkyCoord(coords_str, unit=(u.hourangle, u.deg))
+            if target_coords:
+                coords = target_coords
+            else:
+                # coords = self.getCoords(target, verbose=verbose)
+                coords_str = ' '.join([f[0].header['RA'], f[0].header['DEC']])
+                coords = SkyCoord(coords_str, unit=(u.hourangle, u.deg))
         f.close()
         return target, filters, coords
     
@@ -106,7 +110,7 @@ class Logfile:
              return target_coords
 
 
-    def openData(self, ccd, ap, save=False, mask=True, trim_start=1, trim_end=1):
+    def openData(self, ccd, ap, save=False, mask=True, verbose=False, trim_start=1, trim_end=1):
         # target = self.target.replace(' ', '_')
         # filters = self.filters[::-1]
 
@@ -137,6 +141,8 @@ class Logfile:
         weights = weights[trim_start:trim_end]
 
         if mask:
+            if verbose:
+                print(f"{np.sum(~data_mask)} points removed\n")
             out = np.column_stack([data.t[data_mask],
                                    exp[data_mask],
                                    data.y[data_mask],

@@ -37,7 +37,7 @@ class Observation:
     """
 
 
-    def __init__(self, instrument='ultracam', tel_location=None):
+    def __init__(self, instrument='ultracam', tel_location=None, filters=None):
         root = Tk()
         root.withdraw()
         self.instrument = instrument
@@ -50,13 +50,23 @@ class Observation:
                        'Variability': 'string'}
         self.header_dict = dict()
         self.comparison_mags = dict()
+        if not filters:
+            self.filters = filters
         # set instrument specific variables
         if self.instrument=='ultracam':
             self.tel_location = EarthLocation.of_site('La Silla Observatory')
+            if filters:
+                if not len(filters) == 3:
+                    raise ValueError(f"ULTRACAM takes 3 filters, {len(filters)} filters were given.")
+                for filt in filters:
+                    if filt not in ['u', 'us', 'g', 'gs', 'r', 'rs', 'i', 'is', 'z', 'zs']:
+                        raise ValueError(f"{filt} not a valid ULTRACAM filter.")
+                self.filters = filters
             self.filt2ccd = {'u':'3', 'us':'3', 'g':'2', 'gs':'2', 'r':'1',
                              'rs':'1', 'i':'1', 'is':'1', 'z':'1', 'zs':'1'}
             self.rootDataDir = os.environ.get("UCAM_DATA", "/home")
             self.stds = pd.read_csv(f"{fpath}ucam_flux_stds.csv", dtype=format_dict)
+
         elif self.instrument=='hipercam':
             self.tel_location = EarthLocation.of_site('Roque de los Muchachos')
             self.filt2ccd = {'us':'1', 'gs':'2', 'rs':'3', 'is':'4', 'zs':'5'}
@@ -108,12 +118,13 @@ class Observation:
         return fname
             
 
-    def add_observation(self, name=None, logfiles=None, obs_type='science', cal_mags=None):
+    def add_observation(self, name=None, logfiles=None, obs_type='science', target_coords=None, filters=None, cal_mags=None):
         """
         Adds logfiles and any other key info about a target/observation to
         the observations dictionary. Observation type is specified as 'science'
-        for science target data, 'std' for flux standard observations, and 'atm'
-        for long runs for measuring atmospheric extinction.
+        for science target data, 'std' for flux standard observations, 'fcal'
+        for a reduction with a wider aperture intended for more accurate flux
+        calibration, and 'atm' for long runs for measuring atmospheric extinction.
         """
 
         if not obs_type:
@@ -131,7 +142,7 @@ class Observation:
             raise ValueError('If observations are of a flux standard then '
                              'calibrated magnitudes must be supplied')
         obs1, obs2, obs3 = dict(), dict(), dict()
-        obs1['name'], obs1['logfiles'] = name, logfiles
+        obs1['name'], obs1['logfiles'], obs1['target_coords'] = name, logfiles, target_coords
         if obs_type == 'std':
             obs1['cal_mags'] = self.match_std(cal_mags)
         obs2[name] = obs1
@@ -214,7 +225,7 @@ class Observation:
         logfiles = [item for sublist in logfiles for item in sublist]
 
         for file in logfiles:
-            log = Logfile(file, self.instrument, self.tel_location, verbose=False)
+            log = Logfile(file, self.instrument, self.tel_location, filters=self.filters, verbose=False)
             filters = log.filters
             if log.target not in atm_targets.keys():
                 atm_targets[log.target] = [file]
@@ -227,14 +238,14 @@ class Observation:
 
             for target in atm_targets.keys():
                 log = Logfile(atm_targets[target][0], self.instrument,
-                              self.tel_location, verbose=False)
+                              self.tel_location, filters=self.filters, verbose=False)
 
                 for ap in log.apnames[self.filt2ccd[filt]]:
                     data = np.empty((0,5))
 
                     for lfile in atm_targets[target]:
                         # stitch multiple observations of same field together
-                        log = Logfile(lfile, self.instrument, self.tel_location, log.target_coords, verbose=False)
+                        log = Logfile(lfile, self.instrument, self.tel_location, log.target_coords, filters=self.filters, verbose=False)
                         data_new = log.openData(self.filt2ccd[filt], ap,
                                                 save=False,
                                                 mask=True)[0][:, [0, 1, 2, 3]]
@@ -329,7 +340,7 @@ class Observation:
         logfiles = [item for sublist in logfiles for item in sublist]
         target_names = [name for name in self.observations['std'].keys()]
         for name, file in zip(target_names, logfiles):
-            log = Logfile(file, self.instrument, self.tel_location)
+            log = Logfile(file, self.instrument, self.tel_location, filters=self.filters)
             for filt in log.filters:
                 data = log.openData(self.filt2ccd[filt],
                                     ap='1')[0][:, [0, 1, 2, 3]]
@@ -420,7 +431,7 @@ class Observation:
         return target, comp, diffFlux, diffFluxErr, comp_snr
 
     
-    def calc_comparison_mags(self, target_name=None):
+    def calc_comparison_mags(self, target_name=None, mask=True, verbose=False):
         if target_name:
             if target_name not in self.observations['fcal'].keys():
                 raise ValueError(f"{target_name} is not an added 'fcal' observation.")
@@ -429,7 +440,7 @@ class Observation:
             target_names = self.observations['fcal'].keys()
         for targ_name in target_names:
             log = Logfile(self.observations['fcal'][targ_name]['logfiles'][0],
-                        self.instrument, self.tel_location)
+                          self.instrument, self.tel_location, filters=self.filters)
             cal_mags_filt = dict()
             for filt in log.filters:
                 apertures = log.apnames[self.filt2ccd[filt]]
@@ -437,7 +448,7 @@ class Observation:
                 for aperture in apertures[1:]:
                     cal_mags = dict()
                     comp_data, comp_mask = log.openData(self.filt2ccd[filt], aperture, save=False,
-                                                        mask=False)
+                                                        mask=mask, verbose=verbose)
                     comp_flux, comp_flux_err, mean_airmass = self.cal_comp(comp_data, filt, log.target_coords)
                     comp_mag, comp_mag_err = utils.flux_to_ABmag(comp_flux, comp_flux_err)
                     cal_mags['mean'], cal_mags['err'] = comp_mag, comp_mag_err
@@ -456,7 +467,9 @@ class Observation:
 
         data_arrays = dict()
         log = Logfile(self.observations['science'][target_name]['logfiles'][0],
-                      self.instrument, self.tel_location)
+                      self.instrument, self.tel_location,
+                      self.observations['science'][target_name]['target_coords'],
+                      filters=self.filters)
         target = log.target.replace(' ', '_')
         target = target.replace('_J', 'J')
         ccd = self.filt2ccd['gs']
@@ -553,6 +566,9 @@ class Observation:
         else:
             night = f"{t[0]}-{t[1]}-{t[2]}"
 
+        if use_given_name:
+            target = target_name
+
         header = dict(TARGET=target,
                       RUN=log.run, FILTERS=", ".join(log.filters),
                       NIGHT=night,
@@ -574,8 +590,6 @@ class Observation:
         if t0:
             header['ECLIP_T0'] = t0 + bary_corr[0]
         hdul = FITS.create(data_arrays, header)
-        if use_given_name:
-            target = target_name
         path = os.path.join(log.path, 'reduced', target)
         if not os.path.isdir(os.path.join(log.path, 'reduced')):
             os.makedirs(os.path.join(log.path, 'reduced'))
