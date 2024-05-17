@@ -45,6 +45,12 @@ First import the ``Observation`` class and create an instance.
 
     obs = Observation('ultracam') # or 'hipercam'
 
+if incorrect filters have been entered for the night then this can be fixed by supplying the correct filters manually
+
+.. code-block:: python
+
+    obs = Observation('ultracam', filters=['us', 'gs', 'is'])
+
 Observations or imaging runs are then added with the ``add_observation`` method.
 These are given a name for reference, a list of hipercam pipeline logfiles, and and obs_type.
 An observation can have one of four obs_types: **'atm'**, **'std'**, **'fcal'**, or **'science'**.
@@ -55,7 +61,7 @@ However, aperture numbering must correspond exactly between both observations so
 
 **std** - The logfile from the reduction of a flux standard.
 
-**fcal** -  An optional run on the science target with a large aperture for flux calibration purposes (must have matching comparison stars with the science run).
+**fcal** -  An optional run on the science target with a large aperture for flux calibration purposes (must have matching comparison stars with the science run and should have a matching target aperture radius to the flux standard observation).
 
 **science** - The logfile of the science data. The target must be aperture 1. If not using an **fcal** run then it is wise to match the aperture radii with that of the flux standard in order to prevent systematic effects. 
 
