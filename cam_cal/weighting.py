@@ -3,7 +3,7 @@ import numpy.ma as ma
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit, least_squares, newton
 from scipy.interpolate import interp1d
-from scipy.integrate import simps
+from scipy.integrate import simpson
 import os
 
 
@@ -35,8 +35,8 @@ def in_eg_weights_boost(x, t1, t2, t3, t4, slope, scale):
 def weight_proportion(scale, slope, t, t1, t2, t3 ,t4):
     weights = in_eg_weights_boost(t, t1, t2, t3, t4, slope, scale)
     mask = ((t > t1) & (t < t2)) | ((t > t3) & (t < t4))
-    area_whole = simps(weights)
-    area_boosted = simps(weights[mask])
+    area_whole = simpson(weights)
+    area_boosted = simpson(weights[mask])
     if not mask.any():
         area_boosted = 0
     prop = area_boosted / area_whole
