@@ -154,7 +154,7 @@ class Observation:
         mags_dict = dict(mean={'us':0, 'gs':0, 'rs':0, 'is':0, 'zs':0},
                          err={'us':0.022, 'gs':0.022, 'rs':0.022, 'is':0.022, 'zs':0.022})
         for filt in ['us', 'gs', 'rs', 'is', 'zs']:
-            mags_dict['mean'][filt] = float(series[filt].iloc[0])
+            mags_dict['mean'][filt] = float(series[filt])
         return mags_dict
 
 
@@ -170,7 +170,7 @@ class Observation:
                     raise ValueError(f"{standard} doesn't match the list of standards and can't be resolved in SIMBAD.")
 
         if isinstance(standard, SkyCoord):
-            catalog = SkyCoord(self.stds['RA']*u.deg, self.stds['DEC']*u.deg)
+            catalog = SkyCoord(self.stds['RA'], self.stds['DEC'], unit=(u.deg, u.deg))
             idx, d2d, d3d = standard.match_to_catalog_sky(catalog)
             return self.construct_dict(self.stds.iloc[idx])
 
