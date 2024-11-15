@@ -35,8 +35,8 @@ def in_eg_weights_boost(x, t1, t2, t3, t4, slope, scale):
 def weight_proportion(scale, slope, t, t1, t2, t3 ,t4):
     weights = in_eg_weights_boost(t, t1, t2, t3, t4, slope, scale)
     mask = ((t > t1) & (t < t2)) | ((t > t3) & (t < t4))
-    area_whole = simpson(weights)
-    area_boosted = simpson(weights[mask])
+    area_whole = simpson(weights, dx=1)
+    area_boosted = simpson(weights[mask], dx=1)
     if not mask.any():
         area_boosted = 0
     prop = area_boosted / area_whole
@@ -54,7 +54,7 @@ def get_weights(data, t1, t2, t3, t4, slope, upper_limit=100):
     weightboost = in_eg_weights_boost(t, t1, t2, t3, t4, slope, 10)
     print('Scaling weights')
     scale = scale_weights(0.333, slope, t, t1, t2, t3, t4, upper_limit=upper_limit)
-    print(f"Weights scaled by {float(scale):.2f}")
+    print(f"Weights scaled by {float(scale[0]):.2f}")
     print("Applying weights to light curves...")
     weight = in_eg_weights_boost(t, t1, t2, t3, t4, slope, scale)
     out = np.column_stack([t, exp, y, ye, weight, esubd])
