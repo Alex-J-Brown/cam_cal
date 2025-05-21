@@ -154,7 +154,7 @@ class Observation:
         mags_dict = dict(mean={'us':0, 'gs':0, 'rs':0, 'is':0, 'zs':0},
                          err={'us':0.022, 'gs':0.022, 'rs':0.022, 'is':0.022, 'zs':0.022})
         for filt in ['us', 'gs', 'rs', 'is', 'zs']:
-            mags_dict['mean'][filt] = float(series[filt])
+            mags_dict['mean'][filt] = float(series[filt].iloc[0])
         return mags_dict
 
 
@@ -260,6 +260,7 @@ class Observation:
                     # add stitched data to apertures list
                     apertures.append(data)
             p, errs = self.fit_atm_ext(filt, apertures)
+            
             print(f"{filt}-band extinction: {p[0]:.3f} +- {errs[0]:.3f}")
             if plot:
                 _, ax = plt.subplots()
@@ -270,7 +271,7 @@ class Observation:
                     # ax.legend()
                 plt.show()
             temp_extinctions['mean'][filt] = p[0]
-            temp_extinctions['err'][filt] = np.max([errs[0], 0.01])
+            temp_extinctions['err'][filt] = np.max([errs[0], p[0]*0.1, 0.01])
         write = input("Set fitted atmospheric extinction values [y/n]? ")
         if not write or write=='y':
             # overwrite default extinctions with fitted measurements
@@ -314,9 +315,11 @@ class Observation:
         x0 = [self.atm_extinction['mean'][filt]] + [0 for i in apertures]
         p, cov, _, _, _ = leastsq(self.atm_chisq, x0,
                                   full_output=True, args=(apertures))
+        if p[0] < 0: p[0] = 0
         red_chisq = self.red_chisq(p, apertures)
         # scale variances with reduced chisqr and get std_err for fitted params
         errs = np.sqrt(np.diag(cov * red_chisq))
+
         return p, errs
 
 
