@@ -206,6 +206,47 @@ class Observation:
         return airmasses
 
 
+    def atm_chisq(self, pars, apertures):
+        """Computes combined chi (not squared) for every aperture"""
+
+        k, *c = pars
+        diff = np.array([])
+        for i, data in enumerate(apertures):
+            # compute chi residuals for each aperture
+            mag, mag_err = utils.flux_to_mag(data[:,3]/data[:,2], data[:,4]/data[:,2])
+            airmass = data[:,0]
+            diff_new = np.abs((mag - utils.linear(airmass, k, c[i])) / mag_err)
+            diff = np.hstack((diff, diff_new))
+        return diff
+
+
+    def red_chisq(self, pars, apertures):
+        """Reduced chi-squared given data and fit parameters"""
+
+        chisq = np.sum(self.atm_chisq(pars, apertures)**2)
+        ndata = 0
+        for data in apertures:
+            ndata += data.shape[0]
+        ndf = ndata-len(pars)
+        red_chisq = chisq / ndf
+        return red_chisq.value
+
+
+    def fit_atm_ext(self, filt, apertures):
+        """Fits atmospheric extinction coefficient to data in given apertures."""
+        
+        # add offset parameter for each aperture
+        x0 = [self.atm_extinction['mean'][filt]] + [0 for i in apertures]
+        p, cov, _, _, _ = leastsq(self.atm_chisq, x0,
+                                  full_output=True, args=(apertures))
+        if p[0] < 0: p[0] = 0
+        red_chisq = self.red_chisq(p, apertures)
+        # scale variances with reduced chisqr and get std_err for fitted params
+        errs = np.sqrt(np.diag(cov * red_chisq))
+
+        return p, errs
+
+
     def get_atm_ex(self, plot=True):
         """
         calulates atmospheric extinction from all apertures included in 'atm' logfiles.
@@ -280,47 +321,6 @@ class Observation:
             print('Atmospheric extinction set.\n')
         else:
             print('Keeping default atmospheric extinction.\n')
-
-
-    def atm_chisq(self, pars, apertures):
-        """Computes combined chi (not squared) for every aperture"""
-
-        k, *c = pars
-        diff = np.array([])
-        for i, data in enumerate(apertures):
-            # compute chi residuals for each aperture
-            mag, mag_err = utils.flux_to_mag(data[:,3]/data[:,2], data[:,4]/data[:,2])
-            airmass = data[:,0]
-            diff_new = np.abs((mag - utils.linear(airmass, k, c[i])) / mag_err)
-            diff = np.hstack((diff, diff_new))
-        return diff
-    
-
-    def red_chisq(self, pars, apertures):
-        """Reduced chi-squared given data and fit parameters"""
-
-        chisq = np.sum(self.atm_chisq(pars, apertures)**2)
-        ndata = 0
-        for data in apertures:
-            ndata += data.shape[0]
-        ndf = ndata-len(pars)
-        red_chisq = chisq / ndf
-        return red_chisq.value
-
-
-    def fit_atm_ext(self, filt, apertures):
-        """Fits atmospheric extinction coefficient to data in given apertures."""
-        
-        # add offset parameter for each aperture
-        x0 = [self.atm_extinction['mean'][filt]] + [0 for i in apertures]
-        p, cov, _, _, _ = leastsq(self.atm_chisq, x0,
-                                  full_output=True, args=(apertures))
-        if p[0] < 0: p[0] = 0
-        red_chisq = self.red_chisq(p, apertures)
-        # scale variances with reduced chisqr and get std_err for fitted params
-        errs = np.sqrt(np.diag(cov * red_chisq))
-
-        return p, errs
 
 
     def get_zeropoint(self):
@@ -461,7 +461,7 @@ class Observation:
             self.comparison_mags[targ_name] = cal_mags_filt
 
 
-    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False, show=False):
+    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False, n_div=10, show=False):
         """
         Flux calibrate the selected science target using the calibrated comparison stars.
         eclipse width can be specified.
@@ -536,7 +536,7 @@ class Observation:
                                        calFluxErr_out, weights, weights))
                 if eclipse:
                     slope = 150000 / np.median(np.diff(bmjd_tdb * 86400))
-                    out = weighting.get_weights(out, t1+bary_corr, t2+bary_corr, t3+bary_corr, t4+bary_corr, slope)
+                    out = weighting.get_weights(out, t1+bary_corr, t2+bary_corr, t3+bary_corr, t4+bary_corr, n_div=n_div, slope=slope)
                 out_dict['data'][ap] = out
                 out_dict['fc_mag_err'][ap] = comp_mag_err
                 out_dict['fc_err'][ap] = comp_err_percent.value / 100
