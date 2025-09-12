@@ -49,13 +49,15 @@ def scale_weights(chosen_proportion, slope, t, t1, t2, t3 ,t4, upper_limit):
     return res.x
 
 
-def get_weights(data, t1, t2, t3, t4, slope, upper_limit=100):
-    t, exp, y, ye, _, esubd = data.T
+def get_weights(data, t1, t2, t3, t4, slope, n_div, upper_limit=100):
+    t, exp, y, ye, _, ndiv = data.T
+    ingress_egress_idxs = ((t >t1 ) & (t < t2)) | ((t > t3) & (t < t4))
+    ndiv[ingress_egress_idxs] = n_div
     weightboost = in_eg_weights_boost(t, t1, t2, t3, t4, slope, 10)
     print('Scaling weights')
     scale = scale_weights(0.333, slope, t, t1, t2, t3, t4, upper_limit=upper_limit)
     print(f"Weights scaled by {float(scale[0]):.2f}")
     print("Applying weights to light curves...")
     weight = in_eg_weights_boost(t, t1, t2, t3, t4, slope, scale)
-    out = np.column_stack([t, exp, y, ye, weight, esubd])
+    out = np.column_stack([t, exp, y, ye, weight, ndiv])
     return out
