@@ -2,6 +2,7 @@ import numpy as np
 import os
 from astropy.io import fits
 from astropy.table import Table
+from scipy.stats import binned_statistic
 
 
 class FITS:
@@ -73,9 +74,39 @@ class FITS:
     def write(self, fname):
         self.hdul.writeto(fname, output_verify='warn', overwrite=True)
 
+
+    def calculate_bin_edges(self, times, bin_factor):
+        dt = np.mean(np.diff(times))
+        n_bins = (len(times)//bin_factor) + 1
+        start = times[0] - 0.5*dt
+        end = start + (bin_factor * dt * n_bins)
+        n_edges = n_bins + 1
+        return np.linspace(start, end, n_edges)
     
-    def to_lcurve(self, filename=None, filepath=None, tname=None):
+
+    def bin_fluxes(self, times, fluxes, flux_errors, bins):
+        binned_flux_numerator, _, _ = binned_statistic(times, fluxes/flux_errors**2, statistic='sum', bins=bins)
+        binned_flux_denominator, _, _ = binned_statistic(times, 1/flux_errors**2, statistic='sum', bins=bins)
+        flux_binned = binned_flux_numerator/binned_flux_denominator
+        flux_errs_binned = np.sqrt(1/binned_flux_denominator)
+        return flux_binned, flux_errs_binned
+
+
+    def bin_data(self, time, t_exp, flux, flux_err, weights, esubd, bin_factor):
+        if bin_factor == 1:
+            return time, t_exp, flux, flux_err, weights, esubd
+        bin_edges = self.calculate_bin_edges(time, bin_factor)
+        time_binned, _, _ = binned_statistic(time, time, statistic='mean', bins=bin_edges)
+        t_exp_binned, _, _ = binned_statistic(time, t_exp, statistic='sum', bins=bin_edges)
+        flux_binned, flux_err_binned = self.bin_fluxes(time, flux, flux_err, bins=bin_edges)
+        weights_binned, _, _ = binned_statistic(time, weights, statistic='mean', bins=bin_edges)
+        esubd_binned, _, _ = binned_statistic(time, esubd, statistic='sum', bins=bin_edges)
+        return time_binned, t_exp_binned, flux_binned, flux_err_binned, weights_binned, esubd_binned
+
+
+    def to_lcurve(self, filename=None, filepath=None, tname=None, bin_factors=None):
         header = self.hdul[0].header
+        
         for i, hdu in enumerate(self.hdul[1:]):
             hdr = hdu.header
             t = hdu.data['BMJD(TDB)']
@@ -84,12 +115,14 @@ class FITS:
             flux_err = hdu.data['Flux_err']
             weights = hdu.data['Weight']
             esubd = hdu.data['Esubd']
+            if bin_factors is not None:
+                t, t_exp, flux, flux_err, weights, esubd = self.bin_data(t, t_exp, flux, flux_err, weights, esubd, bin_factors[i])
 
             array = np.column_stack((t, t_exp, flux, flux_err, weights, esubd))
-
-            fname = filename
             fpath = filepath
-            if not fname:
+            if filename:
+                fname = f"{filename}_{hdr['FILTER']}_fc.dat"
+            else:
                 if not tname:
                     tname = header['TARGET']
                 fname = f"{tname}_{header['RUN']}_{header['TIME_ID']}_{hdr['FILTER']}_fc.dat"

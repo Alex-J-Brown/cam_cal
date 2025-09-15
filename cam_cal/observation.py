@@ -461,7 +461,7 @@ class Observation:
             self.comparison_mags[targ_name] = cal_mags_filt
 
 
-    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False, n_div=10, show=False):
+    def calibrate_science(self, target_name, use_given_name=True, comp_mags=None, eclipse=None, lcurve=False, n_div=10, bin_factors=None, show=False):
         """
         Flux calibrate the selected science target using the calibrated comparison stars.
         eclipse width can be specified.
@@ -602,4 +602,4 @@ class Observation:
         fname = os.path.join(path, fname)
         hdul.write(fname)
         if lcurve:
-            hdul.to_lcurve(filepath=path, tname=target)
+            hdul.to_lcurve(filepath=path, tname=target, bin_factors=bin_factors)
