@@ -1,6 +1,7 @@
 from statistics import mean
 import numpy as np
 import pandas as pd
+import hipercam as hcam
 from hipercam import hlog
 import matplotlib.pyplot as plt
 from astropy.table import Table, QTable
@@ -69,6 +70,7 @@ class Observation:
 
         elif self.instrument=='hipercam':
             self.tel_location = EarthLocation.of_site('Roque de los Muchachos')
+            self.filters = ['us', 'gs', 'rs', 'is', 'zs']
             self.filt2ccd = {'us':'1', 'gs':'2', 'rs':'3', 'is':'4', 'zs':'5'}
             self.rootDataDir = os.environ.get("HCAM_DATA", "/home")
             self.stds = pd.read_csv(f"{fpath}hcam_flux_stds.csv", dtype=format_dict)
@@ -202,7 +204,8 @@ class Observation:
 
         frame = AltAz(obstime=times, location=self.tel_location)
         altazs = target_coords.transform_to(frame)
-        airmasses = altazs.secz
+        seczs = altazs.secz
+        airmasses = np.array(seczs * (1 - 0.0012 * (seczs**2 - 1)))
         return airmasses
 
 
@@ -229,7 +232,7 @@ class Observation:
             ndata += data.shape[0]
         ndf = ndata-len(pars)
         red_chisq = chisq / ndf
-        return red_chisq.value
+        return red_chisq
 
 
     def fit_atm_ext(self, filt, apertures):
@@ -245,6 +248,13 @@ class Observation:
         errs = np.sqrt(np.diag(cov * red_chisq))
 
         return p, errs
+
+
+    def get_inst_mags(self, flux, flux_std_err, k, k_err, airmass):
+        mag_i, mag_i_err = utils.flux_to_mag(flux, flux_std_err)
+        inst_mag_0 = mag_i - (k * airmass)
+        inst_mag_0_err = (mag_i_err**2 + (k_err * airmass)**2)**0.5
+        return inst_mag_0, inst_mag_0_err
 
 
     def get_atm_ex(self, plot=True):
@@ -266,7 +276,7 @@ class Observation:
         logfiles = [item for sublist in logfiles for item in sublist]
 
         for file in logfiles:
-            log = Logfile(file, self.instrument, self.tel_location, filters=self.filters, verbose=False)
+            log = Logfile.rascii(file, self.instrument, self.tel_location, filters=self.filters, verbose=False)
             filters = log.filters
             if log.target not in atm_targets.keys():
                 atm_targets[log.target] = [file]
@@ -278,25 +288,27 @@ class Observation:
             apertures = []
 
             for target in atm_targets.keys():
-                log = Logfile(atm_targets[target][0], self.instrument,
-                              self.tel_location, filters=self.filters, verbose=False)
+                log = Logfile.rascii(atm_targets[target][0], self.instrument,
+                                     self.tel_location, filters=self.filters, verbose=False)
 
                 for ap in log.apnames[self.filt2ccd[filt]]:
                     data = np.empty((0,5))
 
                     for lfile in atm_targets[target]:
                         # stitch multiple observations of same field together
-                        log = Logfile(lfile, self.instrument, self.tel_location, log.target_coords, filters=self.filters, verbose=False)
-                        data_new = log.openData(self.filt2ccd[filt], ap,
-                                                save=False,
-                                                mask=True)[0][:, [0, 1, 2, 3]]
+                        log = Logfile.rascii(lfile, self.instrument, self.tel_location, log.target_coords, filters=self.filters, verbose=False)
+
+
+                        data_new = np.column_stack(log.tseries(self.filt2ccd[filt], ap).get_data(bitmask=(hcam.CLOUDS | hcam.JUNK)))
                         data_new = data_new[(np.abs(data_new[:,2] - np.median(data_new[:,2])) / np.abs(np.std(data_new[:,2]))) < 5]
-                        t = Time(data_new[:,0], format='mjd', scale='tdb')
+                        t = Time(data_new[:, 0], format='mjd', scale='tdb')
                         # add airmass column
                         data_am = np.column_stack((self.airmass(t, log.target_coords), data_new))
                         data = np.vstack((data, data_am))
                         # remove negative flux measurements
                         data = data[data[:,3] > 0]
+
+
                     ap_info.append((target, ap))
                     # add stitched data to apertures list
                     apertures.append(data)
@@ -343,28 +355,25 @@ class Observation:
         logfiles = [item for sublist in logfiles for item in sublist]
         target_names = [name for name in self.observations['std'].keys()]
         for name, file in zip(target_names, logfiles):
-            log = Logfile(file, self.instrument, self.tel_location, filters=self.filters)
+            log = Logfile.rascii(file, self.instrument, self.tel_location, filters=self.filters)
             for filt in log.filters:
-                data = log.openData(self.filt2ccd[filt],
-                                    ap='1')[0][:, [0, 1, 2, 3]]
-                t, te, y, ye = np.split(data, 4, axis=1)
+                lc = log.tseries(self.filt2ccd[filt], '1')
+                t, te, y, ye = lc.get_data(bitmask=(hcam.CLOUDS | hcam.JUNK))
+                times = Time(t, format='mjd', scale='utc', location=log.tel_location)
+                airmass = self.airmass(times, target_coords=log.target_coords)
+
                 flux = y/(te*86400)
                 flux_err = ye/(te*86400)
                 flux_std_err = np.mean(flux_err) / np.sqrt(len(flux_err))
-                t = Time(t, format='mjd', scale='tdb')
-                airmass = self.airmass(t, log.target_coords)
-                mag_i, mag_i_err = utils.flux_to_mag(flux, flux_std_err)
-                mag_i0 = mag_i - (self.atm_extinction['mean'][filt] * airmass)
-                mag_i0_err = (mag_i_err**2
-                              + (self.atm_extinction['err'][filt]
-                                 * airmass)**2
-                             )**0.5
+                
+                mag_i0, mag_i0_err = self.get_inst_mags(flux, flux_std_err, self.atm_extinction['mean'][filt],
+                                                        self.atm_extinction['err'][filt], airmass)
                 zp = self.observations['std'][name]['cal_mags']['mean'][filt] - np.mean(mag_i0)
                 zp_err = (np.mean(mag_i0_err)**2
                           + self.observations['std'][name]['cal_mags']['err'][filt]**2)**0.5
-                zp_dict['mean'][filt] = zp.value
-                zp_dict['err'][filt] = zp_err.value
-                zp_dict['airmass'] = np.mean(airmass.value)
+                zp_dict['mean'][filt] = zp
+                zp_dict['err'][filt] = zp_err
+                zp_dict['airmass'] = np.mean(airmass)
                 print(f"{filt}-band zeropoint: {zp:.3f} +- {zp_err:.3f} (airmass = {np.mean(airmass):.2f})")
         write = input("Set calculated zeropoints [y/n]? ")
         if not write or write=='y':
@@ -387,23 +396,25 @@ class Observation:
         return mag_t_err
 
 
-    def cal_comp(self, data, filt, coords):
+    def cal_comp(self, tseries, filt, coords, tel_location):
         """
         Calibrate the mean flux of the comparison and it's uncertainty using
         the instrumental zeropoint and atmospheric extinction.
         """
         # TODO: implement outputting/storing comparison magnitude.
-
-        t, te, y, ye, _, _ = data.T
+        bitmask = (hcam.CLOUDS | hcam.JUNK)
+        mask = tseries.get_mask(bitmask=bitmask)
+        t, te, y, ye = tseries.get_data(bitmask=bitmask)
+        t = Time(t, format='mjd', scale='utc', location=tel_location)
+        airmass = self.airmass(t, coords)
         flux = y/(te*86400)
         flux_err = ye/(te*86400)
-        t = Time(t, format='mjd', scale='tdb')
-        airmass = self.airmass(t, coords)
-
-        mag_i, mag_i_err = utils.flux_to_mag(flux, flux_err)
-        mag_i0 = mag_i - (self.atm_extinction['mean'][filt] * airmass)
+        flux_mask = ma.getmask(ma.masked_greater(flux, 0))
+    
+        mag_i, mag_i_err = utils.flux_to_mag(flux[flux_mask], flux_err[flux_mask])
+        mag_i0 = mag_i - (self.atm_extinction['mean'][filt] * airmass[flux_mask])
         mag_comp = mag_i0 + self.zeropoint['mean'][filt]
-        mag_comp_err = self.flux_cal_err(airmass, mag_i_err, filt)
+        mag_comp_err = self.flux_cal_err(airmass[flux_mask], mag_i_err, filt)
         comp_flux, comp_flux_err = utils.magAB_to_flux(np.mean(mag_comp), np.mean(mag_comp_err))
         return comp_flux, comp_flux_err, np.mean(airmass)
 
@@ -421,17 +432,17 @@ class Observation:
         return start, end
 
 
-    def diff_phot(self, log, ccd, ap, target_data, target_mask):
-        comp_data, comp_mask = log.openData(ccd, ap, save=False,
-                                            mask=False)
-        target, comp = utils.mask_data(target_data, target_mask, comp_data, comp_mask)
+    # def diff_phot(self, log, ccd, ap, target_data, target_mask):
+    #     comp_data, comp_mask = log.openData(ccd, ap, save=False,
+    #                                         mask=False)
+    #     target, comp = utils.mask_data(target_data, target_mask, comp_data, comp_mask)
 
-        _, _, t_y, t_ye, _, _ = target.T
-        _, _, c_y, c_ye, _, _ = comp.T
-        comp_snr = np.median(c_y/c_ye)
-        diffFlux = t_y / c_y
-        diffFluxErr = ((t_ye / t_y)**2 + (c_ye / c_y)**2)**0.5 * np.abs(diffFlux)
-        return target, comp, diffFlux, diffFluxErr, comp_snr
+    #     _, _, t_y, t_ye, _, _ = target.T
+    #     _, _, c_y, c_ye, _, _ = comp.T
+    #     comp_snr = np.median(c_y/c_ye)
+    #     diffFlux = t_y / c_y
+    #     diffFluxErr = ((t_ye / t_y)**2 + (c_ye / c_y)**2)**0.5 * np.abs(diffFlux)
+    #     return target, comp, diffFlux, diffFluxErr, comp_snr
 
     
     def calc_comparison_mags(self, target_name=None, mask=True, verbose=False):
@@ -442,7 +453,7 @@ class Observation:
         else:
             target_names = self.observations['fcal'].keys()
         for targ_name in target_names:
-            log = Logfile(self.observations['fcal'][targ_name]['logfiles'][0],
+            log = Logfile.rascii(self.observations['fcal'][targ_name]['logfiles'][0],
                           self.instrument, self.tel_location, filters=self.filters)
             cal_mags_filt = dict()
             for filt in log.filters:
@@ -450,9 +461,8 @@ class Observation:
                 cal_mags_aper = dict()
                 for aperture in apertures[1:]:
                     cal_mags = dict()
-                    comp_data, comp_mask = log.openData(self.filt2ccd[filt], aperture, save=False,
-                                                        mask=mask, verbose=verbose)
-                    comp_flux, comp_flux_err, mean_airmass = self.cal_comp(comp_data, filt, log.target_coords)
+                    comparison = log.tseries(self.filt2ccd[filt], aperture)
+                    comp_flux, comp_flux_err, mean_airmass = self.cal_comp(comparison, filt, log.target_coords, log.tel_location)
                     comp_mag, comp_mag_err = utils.flux_to_ABmag(comp_flux, comp_flux_err)
                     cal_mags['mean'], cal_mags['err'] = comp_mag, comp_mag_err
                     cal_mags_aper[aperture] = cal_mags
@@ -469,25 +479,27 @@ class Observation:
         #TODO: Implement selecting different aperture sizes/extraction types.
 
         data_arrays = dict()
-        log = Logfile(self.observations['science'][target_name]['logfiles'][0],
-                      self.instrument, self.tel_location,
-                      self.observations['science'][target_name]['target_coords'],
-                      filters=self.filters)
+        log = Logfile.rascii(self.observations['science'][target_name]['logfiles'][0],
+                             self.instrument, self.tel_location,
+                             self.observations['science'][target_name]['target_coords'],
+                             filters=self.filters)
         target = log.target.replace(' ', '_')
         target = target.replace('_J', 'J')
         ccd = self.filt2ccd['gs']
-        target_data_orig, target_mask = log.openData(ccd, '1', save=False,
-                                                     mask=False)
-        target_data, _, diffFlux, _, _ = self.diff_phot(log, ccd, '2', target_data_orig, target_mask)
-        t_t, t_te, _, _, _, _ = target_data.T
+        # target_data_orig, target_mask = log.openData(ccd, '1', save=False,
+        #                                              mask=False)
+        # target_data, _, diffFlux, _, _ = self.diff_phot(log, ccd, '2', target_data_orig, target_mask)
+        # t_t, t_te, _, _, _, _ = target_data.T
+        diff_phot = log.tseries(ccd, '1') / log.tseries(ccd, '2')
+        diff_phot.mjd2tdb(log.target_coords, log.tel_location)
 
         if eclipse:
-            t1, t2, t3, t4 = times.contact_points(t_t, diffFlux)
+            t1, t2, t3, t4 = times.contact_points(diff_phot.t, diff_phot.y)
             start, end = self.get_eclipse(t1, t4, width=eclipse)
             t0 = (t1 + t4) / 2
 
         else:
-            start, end = t_t[0]-0.0001, t_t[-1]+0.0001
+            start, end = diff_phot.t[0]-0.0001, diff_phot.t[-1]+0.0001
             t0 = None
 
         data_arrays = dict(data=dict(), header=dict())
@@ -495,55 +507,53 @@ class Observation:
             out_dict = dict(data=dict(), fc_mag_err=dict(), fc_err=dict())
             ccd = self.filt2ccd[filt]
             print(f"\n{filt}-band (CCD {ccd})")
-            target_data_orig, target_mask = log.openData(ccd, '1', save=False,
-                                                         mask=False)
+            target = log.tseries(ccd, '1')
             best_snr = 0
             best_snr_ap = '2'
             for ap in log.apnames[ccd]:
 
                 if ap == '1':
                     continue
-
-                target_data, comp_data, diffFlux, diffFluxErr, comp_snr = self.diff_phot(log, ccd, ap, target_data_orig, target_mask)
-                t_t, t_te, _, _, _, _ = target_data.T
+                comparison = log.tseries(ccd, ap)
+                diff_phot = target / comparison
+                snr = np.median(diff_phot.y/diff_phot.ye)
+                diff_phot.mjd2tdb(log.target_coords, log.tel_location)
 
                 if comp_mags:
                     comp_flux, comp_flux_err = utils.magAB_to_flux(self.comparison_mags[comp_mags][filt][ap]['mean'],
                                                                    self.comparison_mags[comp_mags][filt][ap]['err'])
                     airmass = self.comparison_mags[comp_mags]['airmass']
                 else:
-                    comp_flux, comp_flux_err, airmass = self.cal_comp(comp_data, filt, log.target_coords)
+                    comp_flux, comp_flux_err, airmass = self.cal_comp(comparison, filt, log.target_coords, log.tel_location)
 
-                calFlux = diffFlux * comp_flux.value
-                calFluxErr = diffFluxErr * comp_flux.value
+                calFlux = diff_phot * comp_flux.value
+                # calFluxErr = diffFluxErr * comp_flux.value
 
                 _, comp_mag_err = utils.flux_to_ABmag(comp_flux, comp_flux_err)
                 comp_err_percent = comp_flux_err*100/comp_flux
-                print(f"Aperture {ap} SNR = {comp_snr:.2f}, Flux cal err = {comp_mag_err:.3f} "
+                print(f"Aperture {ap} SNR = {snr:.2f}, Flux cal err = {comp_mag_err:.3f} "
                       f"mags = {comp_err_percent:.3f}% (airmass = {airmass:.2f})")
 
-                t_out, exp_out, calFlux_out, calFluxErr_out = utils.top_tail([t_t, t_te, calFlux, calFluxErr], t_t, start, end)
+                t_out, exp_out, calFlux_out, calFluxErr_out = utils.top_tail([calFlux.t, calFlux.te, calFlux.y, calFlux.ye], calFlux.t, start, end)
                 weights = np.ones(len(t_out))
-                bary_corr = log.barycorr(t_out).value
-                bmjd_tdb = t_out + bary_corr
 
                 if show:
                     _, ax = plt.subplots()
-                    ax.scatter(bmjd_tdb, calFlux_out)
+                    ax.scatter(t_out, calFlux_out)
                     plt.show()
 
-                out = np.column_stack((bmjd_tdb, exp_out, calFlux_out,
+                out = np.column_stack((t_out, exp_out, calFlux_out,
                                        calFluxErr_out, weights, weights))
                 if eclipse:
-                    slope = 150000 / np.median(np.diff(bmjd_tdb * 86400))
-                    out = weighting.get_weights(out, t1+bary_corr, t2+bary_corr, t3+bary_corr, t4+bary_corr, n_div=n_div, slope=slope)
+                    slope = 150000 / np.median(np.diff(t_out * 86400))
+                    out = weighting.get_weights(out, t1, t2, t3, t4, n_div=n_div, slope=slope)
                 out_dict['data'][ap] = out
                 out_dict['fc_mag_err'][ap] = comp_mag_err
                 out_dict['fc_err'][ap] = comp_err_percent.value / 100
 
 
-                if comp_snr > best_snr:
-                    best_snr = comp_snr
+                if snr > best_snr:
+                    best_snr = snr
                     best_snr_ap = ap
 
             save_ap = input(f"Aperture to save [{best_snr_ap}]: ")
@@ -578,7 +588,7 @@ class Observation:
                       INSTR=self.instrument,
                       RA=log.target_coords.ra.deg,
                       DEC=log.target_coords.dec.deg,
-                      TAR_AIRM=round(airmass.value, 4),
+                      TAR_AIRM=round(airmass, 4),
                       STD_STAR=self.standard,
                       STD_RUN=self.std_run,
                       STD_AIRM=round(self.zeropoint['airmass'], 4),
@@ -586,12 +596,12 @@ class Observation:
                       ZP_E=", ".join([f"{val:.3f}" for val in list(self.zeropoint['err'].values())]),
                       ATM_EX=", ".join([f"{val:.3f}" for val in list(self.atm_extinction['mean'].values())]),
                       ATM_EX_E=", ".join([f"{val:.3f}" for val in list(self.atm_extinction['err'].values())]),
-                      BC_CORR=bary_corr[0],
+                      BC_CORR=log.barycorr().value[0],
                       TIME_CAL=time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
                       TIME_ID=int(time.time()*1000)
                       )
         if t0:
-            header['ECLIP_T0'] = t0 + bary_corr[0]
+            header['ECLIP_T0'] = t0
         hdul = FITS.create(data_arrays, header)
         path = os.path.join(log.path, 'reduced', target)
         if not os.path.isdir(os.path.join(log.path, 'reduced')):

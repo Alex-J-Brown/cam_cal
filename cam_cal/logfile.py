@@ -1,6 +1,7 @@
 import numpy as np
 import numpy.ma as ma
-from hipercam import hlog
+import hipercam as hcam
+from hipercam.hlog import Hlog
 from astropy.io import fits
 import astropy.units as u
 from astropy.time import Time
@@ -10,25 +11,35 @@ import re
 from tkinter.filedialog import askopenfilename, askopenfilenames
 
 
-class Logfile:
+class Logfile(Hlog):
 
-    def __init__(self, file, instrument, tel_location, target_coords=None, filters=None, verbose=True):
-        self.logfile = file
-        self.instrument = instrument
-        self.tel_location = tel_location
 
+    def __init__(self):
+        super().__init__()
+        self.logfile = None
+        self.instrument = None
+        self.tel_location = None
+
+
+    @classmethod
+    def rascii(cls, fname, instrument=None, tel_location=None, target_coords=None, filters=None, verbose=False):
+        obj = super().rascii(fname)
+        obj.instrument = instrument
+        obj.tel_location = tel_location
+        obj.logfile = fname
+        obj.get_metadata(target_coords, filters, verbose)
+        return obj
+    
+
+    def get_metadata(self, target_coords=None, filters=None, verbose=False):
         self.params = self.get_params()
         self.run = os.path.basename(self.params['run'])
         self.extraction = self.params['2'].split()[1]
         self.r_aperture = self.params['2'].split()[2]
         self.path, self.fname = self.getPath()
         self.target, self.filters, self.target_coords = self.getTarget(target_coords, filters, verbose)
-        self.logf = hlog.Hlog.rascii(self.logfile)
+        self.logf = Hlog.rascii(self.logfile)
         self.apnames = self.logf.apnames.copy()
-        if verbose:
-            print('\nTarget = {}'.format(self.target))
-            print('Run = {}'.format(self.run))
-            print('Filters = {}'.format(self.filters))
 
 
     def getPath(self):
@@ -46,19 +57,10 @@ class Logfile:
             eq = line.find('=')
             if eq > -1:
                 log_params[line[:eq].strip('#').strip()] = line[eq+1:].split('#')[0].strip()
+            if "[position]" in line:
+                break
         fptr.close()
         return log_params
-
-
-    def getRun(self):
-        log_params = dict()
-        fptr = open(self.logfile)
-        for line in fptr:
-            eq = line.find('=')
-            if eq > -1:
-                log_params[line[:eq].strip('#').strip()] = line[eq+1:].split('#')[0].strip()
-        fptr.close()
-        return log_params['run']
 
 
     def getTarget(self, target_coords, filters=None, verbose=True):
@@ -99,18 +101,18 @@ class Logfile:
 
 
     def getCoords(self, target=None, verbose=True):
-             if target:
-                 try:
-                     target_coords = SkyCoord.from_name(target, parse=True)
-                 except name_resolve.NameResolveError:
-                     print(f"Can't find {target} in Simbad, enter object name manually")
-                     target_coords = self.manualInput()
-             else:
-                 target_coords = self.manualInput()
-             return target_coords
+        if target:
+            try:
+                target_coords = SkyCoord.from_name(target, parse=True)
+            except name_resolve.NameResolveError:
+                print(f"Can't find {target} in Simbad, enter object name manually")
+                target_coords = self.manualInput()
+        else:
+            target_coords = self.manualInput()
+        return target_coords
+    
 
-
-    def openData(self, ccd, ap, save=False, mask=True, verbose=False, trim_start=1, trim_end=1):
+    def openData(self, ccd, ap, save=False, bitmask=hcam.JUNK, mask=True, verbose=False, trim_start=1, trim_end=1, barycentric_correct=True):
         # target = self.target.replace(' ', '_')
         # filters = self.filters[::-1]
 
@@ -127,11 +129,11 @@ class Logfile:
             raise ValueError('{} not a valid aperture'.format(ap))
 
         data = self.logf.tseries(ccd, ap)
-        obstime = Time(data.t,format='mjd', scale='utc',location=self.tel_location)
+        obstime = Time(data.t, format='mjd', scale='utc', location=self.tel_location)
         data.t = obstime.tdb.value
         exp = self.logf[ccd]['Exptim']/86400
         weights = np.ones(len(data.t))
-        m = data.get_mask()
+        m = data.get_mask(hcam.JUNK)
         zero_flux_mask = ma.getmask(ma.masked_not_equal(data.y, 0))
         data_mask = np.logical_and(~m, zero_flux_mask)[trim_start:trim_end]
         data.t = data.t[trim_start:trim_end]
@@ -139,6 +141,15 @@ class Logfile:
         data.y = data.y[trim_start:trim_end]
         data.ye = data.ye[trim_start:trim_end]
         weights = weights[trim_start:trim_end]
+
+
+
+        data = self.logf.tseries(ccd, ap)
+        if barycentric_correct:
+            data.mjd2tdb(self.target_coords, self.tel_location)
+        t, te, y, ye = data.get_data(bitmask=bitmask)
+        zero_flux_mask = ma.getmask(ma.masked_not_equal(data.y, 0))
+        
 
         if mask:
             if verbose:
@@ -154,7 +165,7 @@ class Logfile:
         return out, data_mask
     
 
-    def barycorr(self, t):
-        obstimes = Time(t, format='mjd', scale='tdb', location=self.tel_location)
+    def barycorr(self):
+        obstimes = Time(self.tseries('2', '1').t, format='mjd', scale='utc', location=self.tel_location)
         bary_corr = obstimes.light_travel_time(self.target_coords)
         return bary_corr
