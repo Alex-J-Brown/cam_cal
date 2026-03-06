@@ -6,6 +6,25 @@ import matplotlib.pyplot as plt
 import heapq
 
 
+class clickevent:
+    def __init__(self, list, fig):
+        self.list = list
+        self.cid = fig.canvas.mpl_connect('button_press_event', self)
+
+    def __call__(self, event):
+        if event.inaxes is not None and len(self.list) < 4 and not event.key == 'd' and event.button == 1 and event.dblclick == True:
+            self.list.append(event.xdata)
+            event.inaxes.axvline(event.xdata)
+            plt.draw()
+        elif event.inaxes is not None and len(self.list) > 0 and event.key == 'd':
+            idx = np.argmin(np.abs(self.list - event.xdata))
+            event.inaxes.axes.lines[-len(self.list)+idx].remove()
+            self.list.remove(self.list[idx])
+            plt.draw()
+        elif event.key == 'q':
+            plt.close()
+
+
 def sigmoid(x, x0, slope):
     """
     Sigmoid function with limited exponents.
@@ -45,7 +64,7 @@ def get_ingress_egress(time, flux):
     return t1, t2
 
 
-def contact_points(t, y):
+def contact_points_sigmoid(t, y):
     """
     Estimate eclipse contact points by fitting a quick and dirty eclipse-like
     function made up of two opposing sigmoids and a quadratic term centred on
@@ -66,8 +85,31 @@ def contact_points(t, y):
     t_half_2 = tdense[tdense > t0]
     rev_interp_1 = interp1d(sigmoid_fit_func(t_half_1, *res.x), t_half_1)
     rev_interp_2 = interp1d(sigmoid_fit_func(t_half_2, *res.x), t_half_2)
+
     t1 = rev_interp_1(0.98*fit_depth + np.min(sigmoid_fit_func(tdense, *res.x)))
     t2 = rev_interp_1(0.02*fit_depth + np.min(sigmoid_fit_func(tdense, *res.x)))
     t3 = rev_interp_2(0.02*fit_depth + np.min(sigmoid_fit_func(tdense, *res.x)))
     t4 = rev_interp_2(0.98*fit_depth + np.min(sigmoid_fit_func(tdense, *res.x)))
+    return t1, t2, t3, t4
+
+
+def contact_points_interactive(t, y):
+    print("Double click to select the four contact points manually.")
+    print("(d)elete, (q)uit")
+    click_positions = []
+    fig, ax = plt.subplots()
+    ax.scatter(t, y)
+    click = clickevent(click_positions, fig)
+    plt.show()
+    click_positions.sort()
+    t1, t2, t3, t4 = click_positions
+    return t1, t2, t3, t4
+
+
+def contact_points(t, y):
+    try:
+        t1, t2, t3, t4 = contact_points_sigmoid(t, y)
+    except Exception as e:
+        print("Fitting of contact points failed.")
+        t1, t2, t3, t4 = contact_points_interactive(t, y)
     return t1, t2, t3, t4
