@@ -77,7 +77,7 @@ class FITS:
 
     def calculate_bin_edges(self, times, bin_factor):
         dt = np.mean(np.diff(times))
-        n_bins = (len(times)//bin_factor) + 1
+        n_bins = int(np.ceil(len(times)/bin_factor))
         start = times[0] - 0.5*dt
         end = start + (bin_factor * dt * n_bins)
         n_edges = n_bins + 1
@@ -100,7 +100,7 @@ class FITS:
         t_exp_binned, _, _ = binned_statistic(time, t_exp, statistic='sum', bins=bin_edges)
         flux_binned, flux_err_binned = self.bin_fluxes(time, flux, flux_err, bins=bin_edges)
         weights_binned, _, _ = binned_statistic(time, weights, statistic='mean', bins=bin_edges)
-        esubd_binned, _, _ = binned_statistic(time, esubd, statistic='sum', bins=bin_edges)
+        esubd_binned, _, _ = binned_statistic(time, esubd, statistic='max', bins=bin_edges)
         return time_binned, t_exp_binned, flux_binned, flux_err_binned, weights_binned, esubd_binned
 
 
