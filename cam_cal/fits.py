@@ -133,4 +133,4 @@ class FITS:
                         fpath = ""
                 fname = os.path.join(fpath, fname)
             
-            np.savetxt(fname, array)
+            np.savetxt(fname, array, fmt=["%.18e", "%.18e", "%.18e", "%.18e", "%.18e", "%i"])
