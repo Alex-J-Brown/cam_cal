@@ -582,11 +582,11 @@ class Observation:
                       STD_STAR=self.standard,
                       STD_RUN=self.std_run,
                       STD_AIRM=round(self.zeropoint['airmass'], 4),
-                      ZP=", ".join([f"{val:.3f}" for val in list(self.zeropoint['mean'].values())]),
-                      ZP_E=", ".join([f"{val:.3f}" for val in list(self.zeropoint['err'].values())]),
-                      ATM_EX=", ".join([f"{val:.3f}" for val in list(self.atm_extinction['mean'].values())]),
-                      ATM_EX_E=", ".join([f"{val:.3f}" for val in list(self.atm_extinction['err'].values())]),
-                      BC_CORR=bary_corr[0],
+                      ZP=", ".join([f"{val:.3f}" for (key, val) in self.zeropoint['mean'].items() if key in log.filters]),
+                      ZP_E=", ".join([f"{val:.3f}" for (key, val) in self.zeropoint['err'].items() if key in log.filters]),
+                      ATM_EX=", ".join([f"{val:.3f}" for (key, val) in self.atm_extinction['mean'].items() if key in log.filters]),
+                      ATM_EX_E=", ".join([f"{val:.3f}" for (key, val) in self.atm_extinction['err'].items() if key in log.filters]),
+                      BC_CORR=log.barycorr().value[0],
                       TIME_CAL=time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
                       TIME_ID=int(time.time()*1000)
                       )
